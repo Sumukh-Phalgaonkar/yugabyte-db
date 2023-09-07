@@ -1930,8 +1930,18 @@ public class AsyncYBClient implements AutoCloseable {
       tablet = getTablet(tableId, tabletId);
     }
     if (request instanceof SetCheckpointRequest) {
+      System.out.println("Sumukh: Inside sendRPC to tablet");
       String tabletId = ((SetCheckpointRequest)request).getTabletId();
+      System.out.println("Sumukh: TabletID = " + tabletId);
       tablet = getTablet(tableId, tabletId);
+      if(tablet != null){
+        System.out.println("Sumukh: tablet = " + tablet.leaderIndex +" "+tablet.toString()+ " tablet servers = " + tablet.tabletServers);
+      }
+      else{
+        System.out.println("Sumukh: tablet is null");
+      }
+      // System.out.println("Sumukh: tablet before = " + tablet.tabletId);
+      // tablet.refreshServers();
     }
     if (request instanceof GetTabletListToPollForCDCRequest ||
         request instanceof SplitTabletRequest ||
@@ -1946,9 +1956,21 @@ public class AsyncYBClient implements AutoCloseable {
     }
 
     if (tablet != null) {
+      tablet.refreshServers(null);
       TabletClient tabletClient = clientFor(tablet);
-
-      if (tabletClient != null) {
+      if(request instanceof SetCheckpointRequest){
+        System.out.println("Sumukh: SetCheckpoint Request");
+      }
+      else if(tabletClient == null){
+        System.out.println("Sumukh: tabletClient is null");
+      }
+      else
+      {
+        System.out.println("Sumukh: some other RPC");
+      }
+      if (tabletClient != null && !tabletClient.isDead()) {
+        System.out.println("Tablet Client = " + tabletClient.toString() + "is alive? " + tabletClient.isAlive() + " UUID "
+            + tabletClient.getUuid());
         request.setTablet(tablet);
         final Deferred<R> d = request.getDeferred();
         tabletClient.sendRpc(request);
@@ -1962,6 +1984,7 @@ public class AsyncYBClient implements AutoCloseable {
     // see if the table was created. We'll spin like this until the table is created and then
     // we'll try to locate the tablet again.
     if (tablesNotServed.contains(tableId)) {
+      System.out.println("Sumukh: tableID "+tableId+" added to tablesNotServed Set");
       return delayedIsCreateTableDone(request.getTable(), request,
           new RetryRpcCB<R, MasterDdlOuterClass.IsCreateTableDoneResponsePB>(request),
           getDelayedIsCreateTableDoneErrback(request));
@@ -2236,13 +2259,13 @@ public class AsyncYBClient implements AutoCloseable {
         return null;
       }
       if (tablet.leaderIndex == RemoteTablet.NO_LEADER_INDEX) {
-        LOG.debug("We don't know the leader.");
+        LOG.info("We don't know the leader.");
         // TODO we don't know where the leader is, either because one wasn't provided or because
         // we couldn't resolve its IP. We'll just send the client back so it retries and probably
         // dies after too many attempts.
         return null;
       } else {
-        LOG.debug("We know the leader.");
+        LOG.info("We know the leader.");
         // TODO we currently always hit the leader, we probably don't need to except for writes
         // and some reads.
         return tablet.tabletServers.get(tablet.leaderIndex);
@@ -2297,12 +2320,14 @@ public class AsyncYBClient implements AutoCloseable {
    */
   Deferred<GetTableLocationsResponsePB> locateTablet(
       YBTable table, byte[] partitionKey, boolean includeInactive) {
+    System.out.println("Sumukh Locate Tablet Called");
     final boolean has_permit = acquireMasterLookupPermit();
     String tableId = table.getTableId();
     if (!has_permit) {
       // If we failed to acquire a permit, it's worth checking if someone
       // looked up the tablet we're interested in.  Every once in a while
       // this will save us a Master lookup.
+      System.out.println("Sumukh: No permit");
       RemoteTablet tablet = getTablet(tableId, partitionKey);
       if (tablet != null && clientFor(tablet) != null) {
         return Deferred.fromResult(null);  // Looks like no lookup needed.
@@ -2324,6 +2349,7 @@ public class AsyncYBClient implements AutoCloseable {
     // 'masterAddresses' field) to determine and cache the current leader.
     if (isMasterTable(tableId)) {
       d = getMasterTableLocationsPB();
+      System.out.println("Sumukh Updated master config");
     } else {
       d = sendRpcToTablet(rpc);
     }
@@ -2353,6 +2379,7 @@ public class AsyncYBClient implements AutoCloseable {
       TabletClient clientForHostAndPort = newMasterClient(hostAndPort);
       if (clientForHostAndPort == null) {
         String message = "Couldn't resolve this master's address " + hostAndPort.toString();
+        System.out.println("Sumukh: "+message);
         LOG.warn(message);
         d = Deferred.fromError(new NonRecoverableException(message));
       } else {

@@ -1874,7 +1874,7 @@ Status CDCServiceImpl::UpdatePeersCdcMinReplicatedIndex(
       // We modify our log directly. Avoid calling itself through the proxy.
       continue;
     }
-    VLOG(1) << "Modifying remote peer " << server->ToString();
+    LOG(INFO) << "Modifying remote peer " << server->ToString();
     auto proxy = GetCDCServiceProxy(server);
     UpdateCdcReplicatedIndexRequestPB update_index_req;
     UpdateCdcReplicatedIndexResponsePB update_index_resp;

@@ -149,13 +149,17 @@ public class TabletClient extends ReplayingDecoder<Void> {
     this.socketReadTimeoutMs = client.getDefaultSocketReadTimeoutMs();
   }
 
+  public boolean isDead(){
+    return (dead);
+  }
+
   public void setDisconnectListener(BiConsumer<TabletClient, Channel> disconnectListener) {
     this.disconnectListener = disconnectListener;
   }
 
   <R> void sendRpc(YRpc<R> rpc) {
     if (!rpc.deadlineTracker.hasDeadline()) {
-      LOG.warn(getPeerUuidLoggingString() + " sending an rpc without a timeout " + rpc);
+      LOG.info(getPeerUuidLoggingString() + " sending an rpc without a timeout " + rpc);
     }
     if (chan != null) {
       final ByteBuf serialized = encode(rpc);
@@ -503,6 +507,7 @@ public class TabletClient extends ReplayingDecoder<Void> {
   private Exception dispatchCDCErrorOrReturnException(YRpc rpc,
                                                      CdcService.CDCErrorPB error) {
     WireProtocol.AppStatusPB.ErrorCode code = error.getStatus().getCode();
+    System.out.println("Sumukh: error code = " + code);
     CDCErrorException ex = new CDCErrorException(uuid, error);
     if (error.getCode() == CdcService.CDCErrorPB.Code.TABLET_NOT_RUNNING ||
       error.getCode() == CdcService.CDCErrorPB.Code.LEADER_NOT_READY ||
@@ -515,13 +520,15 @@ public class TabletClient extends ReplayingDecoder<Void> {
       code == WireProtocol.AppStatusPB.ErrorCode.IO_ERROR ||
       code == WireProtocol.AppStatusPB.ErrorCode.LEADER_NOT_READY_TO_SERVE ||
       code == WireProtocol.AppStatusPB.ErrorCode.TIMED_OUT) {
+      System.out.println("Sumukh will handle Retryable error");
       ybClient.handleRetryableError(rpc, ex, this);
       // The following error codes are an indication that the tablet isn't a leader, or, in case
       // of LEADER_HAS_NO_LEASE, might no longer be the leader due to failing to replicate a leader
       // lease, so we retry looking up the leader anyway.
     }
     else if (error.getCode() == CdcService.CDCErrorPB.Code.TABLET_NOT_FOUND ||
-      code == WireProtocol.AppStatusPB.ErrorCode.NOT_FOUND) {
+      code == WireProtocol.AppStatusPB.ErrorCode.NOT_FOUND ||
+      code == WireProtocol.AppStatusPB.ErrorCode.NETWORK_ERROR) {
       ybClient.handleTabletNotFound(rpc, ex, this);
     }
     else if (code == WireProtocol.AppStatusPB.ErrorCode.LEADER_HAS_NO_LEASE ||
