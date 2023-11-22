@@ -505,7 +505,7 @@ HybridTime GetCDCSDKSafeTimeForTarget(
     const HybridTime leader_safe_time, HybridTime safe_hybrid_time_resp,
     HaveMoreMessages have_more_messages, const uint64_t& consistent_stream_safe_time,
     const bool& is_snapshot_op) {
-  if (FLAGS_cdc_enable_consistent_records || is_snapshot_op) { // Sumukh: used to set safe time in response towards the end of GetChangesForCDCSDK. Can't filter.
+  if (FLAGS_cdc_enable_consistent_records || is_snapshot_op) {
     return safe_hybrid_time_resp.is_valid() ? safe_hybrid_time_resp
                                             : HybridTime(consistent_stream_safe_time);
   }
@@ -1748,9 +1748,14 @@ Status GetConsistentWALRecords(
           << ", last_seen_op_id: " << last_seen_op_id->ToString()
           << ", historical_max_op_id: " << historical_max_op_id;
   auto consensus = VERIFY_RESULT(tablet_peer->GetConsensus());
+  HaveMoreMessages have_more_messages(false);
   do {
     auto read_ops = VERIFY_RESULT(consensus->ReadReplicatedMessagesForCDC(
         *last_seen_op_id, *last_readable_opid_index, deadline));
+
+    LOG(INFO) << "GetConsistentWALRecords, Have more messages = "
+              << read_ops.have_more_messages.get();
+    have_more_messages = read_ops.have_more_messages;
 
     if (read_ops.messages.empty()) {
       VLOG_WITH_FUNC(1) << "Did not get any messages with current batch of 'read_ops'."
@@ -1769,7 +1774,7 @@ Status GetConsistentWALRecords(
 
       if (IsIntent(msg) || (IsUpdateTransactionOp(msg) &&
                             msg->transaction_state().status() != TransactionStatus::APPLYING)) {
-        continue; //Sumukh: this filtering will not apply to cql flow
+        continue;
       }
 
       if (VLOG_IS_ON(3) && IsUpdateTransactionOp(msg) &&
@@ -1803,6 +1808,11 @@ Status GetConsistentWALRecords(
 
   // Handle the case where WAL doesn't have the apply record for all the committed transactions.
   if (historical_max_op_id.valid() && historical_max_op_id > *last_seen_op_id) {
+    (*wait_for_wal_update) = true;
+  }
+
+  if (consistent_wal_records->empty() && have_more_messages) {
+    LOG(INFO) << "consistent_wal_records were empty and have_more_messages was true";
     (*wait_for_wal_update) = true;
   }
 
@@ -1864,7 +1874,7 @@ Status GetWALRecords(
 // Basic sanity checks on the wal_segment_index recieved from the request.
 int GetWalSegmentIndex(const int& wal_segment_index_req) {
   if (!FLAGS_cdc_enable_consistent_records) return 0;
-  return wal_segment_index_req >= 0 ? wal_segment_index_req : 0; //Doubt: If wal_segment_index_req > 0, we can miss an entire transaction. See line 2382. When can connector send positive wal_segment_index_req?
+  return wal_segment_index_req >= 0 ? wal_segment_index_req : 0;
 }
 
 // Returns 'true' if we should update the response safe time to the record's commit time.
@@ -1926,8 +1936,8 @@ bool CanUpdateCheckpointOpId(
     int* wal_segment_index) {
   bool update_checkpoint = false;
 
-  if (!FLAGS_cdc_enable_consistent_records) { // Sumukh: this is called in AcknowledgeStreamedMsg, so will not filter out messages
-    --(*wal_segment_index); // Doubt: why are we decrementing the wal_segment_index
+  if (!FLAGS_cdc_enable_consistent_records) {
+    --(*wal_segment_index);
     ++(*next_checkpoint_index);
     return true;
   }
@@ -2003,7 +2013,7 @@ void SetSafetimeFromRequestIfInvalid(
 void UpdateSafetimeForResponse(
     const std::shared_ptr<yb::consensus::LWReplicateMsg>& msg, const bool& update_safe_time,
     const int64_t& safe_hybrid_time_req, HybridTime* safe_hybrid_time_resp) {
-  if (!FLAGS_cdc_enable_consistent_records) { // Sumukh: this is called in AcknowledgeStreamedMsg, so will not filter out messages
+  if (!FLAGS_cdc_enable_consistent_records) {
     *safe_hybrid_time_resp = HybridTime(GetTransactionCommitTime(msg));
     return;
   }
@@ -2227,7 +2237,7 @@ Status GetChangesForCDCSDK(
         stream_id, tablet_id, from_op_id, tablet_peer, enum_oid_label_map, composite_atts_map,
         client, resp, cached_schema_details, colocated_table_id, tablet_ptr, &table_name,
         &checkpoint, &checkpoint_updated, &safe_hybrid_time_resp));
-  } else if (!from_op_id.key().empty() && from_op_id.write_id() != 0) { //Doubt: As the if condition is for snapshot, what is this else if condition for? Partially streamed transactions?
+  } else if (!from_op_id.key().empty() && from_op_id.write_id() != 0) {
     std::string reverse_index_key = from_op_id.key();
     Slice reverse_index_key_slice(reverse_index_key);
     std::vector<docdb::IntentKeyValueForCDC> keyValueIntents;
@@ -2242,7 +2252,7 @@ Status GetChangesForCDCSDK(
     size_t next_checkpoint_index = 0;
     std::vector<std::shared_ptr<yb::consensus::LWReplicateMsg>> wal_records, all_checkpoints;
 
-    if (FLAGS_cdc_enable_consistent_records) // Sumukh: cql flow will not reach here since, we only get single shard transactions.
+    if (FLAGS_cdc_enable_consistent_records)
       RETURN_NOT_OK(GetConsistentWALRecords(
           tablet_peer, mem_tracker, msgs_holder, &consumption, consistent_stream_safe_time,
           historical_max_op_id, &wait_for_wal_update, &last_seen_op_id, &last_readable_opid_index,
@@ -2322,7 +2332,7 @@ Status GetChangesForCDCSDK(
       size_t next_checkpoint_index = 0;
       std::vector<std::shared_ptr<yb::consensus::LWReplicateMsg>> wal_records, all_checkpoints;
 
-      if (FLAGS_cdc_enable_consistent_records) //Sumukh: we encounter this in cql flow.
+      if (FLAGS_cdc_enable_consistent_records)
         RETURN_NOT_OK(GetConsistentWALRecords(
             tablet_peer, mem_tracker, msgs_holder, &consumption, consistent_stream_safe_time,
             historical_max_op_id, &wait_for_wal_update, &last_seen_op_id, &last_readable_opid_index,
@@ -2385,14 +2395,15 @@ Status GetChangesForCDCSDK(
         // We should not stream messages we have already streamed again in this case,
         // except for "SPLIT_OP" messages which can appear with a hybrid_time lower than
         // safe_hybrid_time_req.
-        if (FLAGS_cdc_enable_consistent_records && safe_hybrid_time_req >= 0 && // Sumukh: ISSUE HERE
+        if (FLAGS_cdc_enable_consistent_records && safe_hybrid_time_req >= 0 &&
             GetTransactionCommitTime(msg) <= (uint64_t)safe_hybrid_time_req &&
             msg->op_type() != yb::consensus::OperationType::SPLIT_OP) {
           VLOG_WITH_FUNC(2)
               << "Received a message in wal_segment with commit_time <= request safe time."
                  " Will ignore this message. consistent_stream_safe_time: "
-              << consistent_stream_safe_time << ", safe_hybrid_time_req: " << safe_hybrid_time_req
-              << ", tablet_id: " << tablet_id << ", wal_msg: " << msg->ShortDebugString();
+              << consistent_stream_safe_time << ", commit time: " << GetTransactionCommitTime(msg)
+              << ", safe_hybrid_time_req: " << safe_hybrid_time_req << ", tablet_id: " << tablet_id
+              << ", OP_TYPE: " << msg->op_type() << ", wal_msg: " << msg->ShortDebugString();
           saw_non_actionable_message = true;
           AcknowledgeStreamedMsg(
               msg, false, safe_hybrid_time_req, &next_checkpoint_index, all_checkpoints,
@@ -2403,7 +2414,7 @@ Status GetChangesForCDCSDK(
         // We should break if we have started seeing records with commit_time more than the
         // consistent_stream_safe_time.
         if (FLAGS_cdc_enable_consistent_records &&
-            GetTransactionCommitTime(msg) > consistent_stream_safe_time) { // Doubt: This particular msg is not streamed in this iteration. But will it be streamed in coming iterations?
+            GetTransactionCommitTime(msg) > consistent_stream_safe_time) {
           VLOG_WITH_FUNC(2)
               << "Received a message in wal_segment with commit_time > consistent_safe_time."
                  " Will not process further messages in this GetChanges call. "
@@ -2487,9 +2498,9 @@ Status GetChangesForCDCSDK(
                   &next_checkpoint_index, all_checkpoints, &checkpoint, last_streamed_op_id,
                   &safe_hybrid_time_resp, &wal_segment_index);
               checkpoint_updated = true;
-            }
-            else {
-              LOG(INFO) << "SP: The batch has transaction for single shard transaction.";
+            } else {
+              LOG(INFO) << "The batch has transaction for single shard transaction, batch = "
+                        << batch.ShortDebugString();
             }
           } break;
 

@@ -751,7 +751,7 @@ Result<ReadOpsResult> PeerMessageQueue::ReadReplicatedMessagesForCDC(
 
   if (last_op_id.index >= to_index && !fetch_single_entry) {
     // Nothing to read.
-    return ReadOpsResult();
+    return ReadOpsResult{.have_more_messages = HaveMoreMessages(pending_messages)};
   }
 
   // If an empty OpID is only sent on the first read request, start at the earliest known entry.
