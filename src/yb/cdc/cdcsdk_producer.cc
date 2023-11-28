@@ -1753,14 +1753,13 @@ Status GetConsistentWALRecords(
     auto read_ops = VERIFY_RESULT(consensus->ReadReplicatedMessagesForCDC(
         *last_seen_op_id, *last_readable_opid_index, deadline));
 
-    LOG(INFO) << "GetConsistentWALRecords, Have more messages = "
-              << read_ops.have_more_messages.get();
     have_more_messages = read_ops.have_more_messages;
 
     if (read_ops.messages.empty()) {
       VLOG_WITH_FUNC(1) << "Did not get any messages with current batch of 'read_ops'."
                         << "last_seen_op_id: " << *last_seen_op_id << ", last_readable_opid_index "
-                        << **last_readable_opid_index;
+                        << **last_readable_opid_index
+                        << ", have_more_messages: " << have_more_messages.get();
       break;
     }
 
@@ -1812,7 +1811,8 @@ Status GetConsistentWALRecords(
   }
 
   if (consistent_wal_records->empty() && have_more_messages) {
-    LOG(INFO) << "consistent_wal_records were empty and have_more_messages was true";
+    VLOG_WITH_FUNC(2) << "consistent_wal_records were empty and have_more_messages was true. Will "
+                         "wait for WAL update";
     (*wait_for_wal_update) = true;
   }
 
@@ -2499,8 +2499,9 @@ Status GetChangesForCDCSDK(
                   &safe_hybrid_time_resp, &wal_segment_index);
               checkpoint_updated = true;
             } else {
-              LOG(INFO) << "The batch has transaction for single shard transaction, batch = "
-                        << batch.ShortDebugString();
+              VLOG_WITH_FUNC(2)
+                  << "The batch has transaction for single shard transaction, batch = "
+                  << batch.ShortDebugString();
             }
           } break;
 
