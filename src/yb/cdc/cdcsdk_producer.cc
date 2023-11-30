@@ -1748,7 +1748,7 @@ Status GetConsistentWALRecords(
           << ", last_seen_op_id: " << last_seen_op_id->ToString()
           << ", historical_max_op_id: " << historical_max_op_id;
   auto consensus = VERIFY_RESULT(tablet_peer->GetConsensus());
-  HaveMoreMessages have_more_messages(false);
+  HaveMoreMessages have_more_messages = HaveMoreMessages::kFalse;
   do {
     auto read_ops = VERIFY_RESULT(consensus->ReadReplicatedMessagesForCDC(
         *last_seen_op_id, *last_readable_opid_index, deadline));
@@ -1813,7 +1813,7 @@ Status GetConsistentWALRecords(
   if (consistent_wal_records->empty() && have_more_messages) {
     VLOG_WITH_FUNC(2) << "consistent_wal_records were empty and have_more_messages was true. Will "
                          "wait for WAL update";
-    (*wait_for_wal_update) = true;
+    *wait_for_wal_update = true;
   }
 
   SortConsistentWALRecords(consistent_wal_records);
