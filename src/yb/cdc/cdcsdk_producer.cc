@@ -1748,7 +1748,7 @@ Status GetConsistentWALRecords(
           << ", last_seen_op_id: " << last_seen_op_id->ToString()
           << ", historical_max_op_id: " << historical_max_op_id;
   auto consensus = VERIFY_RESULT(tablet_peer->GetConsensus());
-  HaveMoreMessages have_more_messages = HaveMoreMessages::kFalse;
+  auto have_more_messages = HaveMoreMessages(false);
   do {
     auto read_ops = VERIFY_RESULT(consensus->ReadReplicatedMessagesForCDC(
         *last_seen_op_id, *last_readable_opid_index, deadline));
