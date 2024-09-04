@@ -82,6 +82,8 @@ struct ReadOpsResult {
   OpId preceding_op;
   HaveMoreMessages have_more_messages = HaveMoreMessages::kFalse;
   int64_t read_from_disk_size = 0;
+  uint64_t consistent_stream_safe_time_from_WAL = 0;
+  int64_t segment_max_replicate_index = -1;
 };
 
 // Write-through cache for the log.
@@ -160,6 +162,9 @@ class LogCache {
 
   int64_t earliest_op_index() const;
 
+  Result<uint64_t> GetConsistentStreamSafeTimeFromSegmentFooter(const int64_t segment_number) const;
+
+  Result<int64_t> GetMaxReplicateIndexFromSegmentFooter(const int64_t segment_number) const;
   // Dump the current contents of the cache to the log.
   void DumpToLog() const;
 

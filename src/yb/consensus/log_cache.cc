@@ -37,6 +37,8 @@
 #include <mutex>
 #include <vector>
 
+#include "yb/common/hybrid_time.h"
+
 #include "yb/consensus/consensus.messages.h"
 #include "yb/consensus/consensus_util.h"
 #include "yb/consensus/log.h"
@@ -293,6 +295,48 @@ int64_t LogCache::earliest_op_index() const {
     ret = log_->GetMinReplicateIndex();
   }
   return ret;
+}
+
+Result<uint64_t> LogCache::GetConsistentStreamSafeTimeFromSegmentFooter(
+    const int64_t segment_number) const {
+  uint64_t consistent_stream_safe_time = 0;
+  const auto segment =
+      VERIFY_RESULT(log_->GetLogReader()->GetSegmentBySequenceNumber(segment_number));
+  if (!segment) {
+    LOG_WITH_PREFIX(WARNING) << "Segment " << segment_number << " not found";
+    return consistent_stream_safe_time;
+  }
+  if (segment->HasFooter()) {
+    consistent_stream_safe_time = segment->footer().has_consistent_stream_safe_time()
+                                      ? segment->footer().consistent_stream_safe_time()
+                                      : 0;
+  } else {
+    consistent_stream_safe_time =
+        log_->LoadConsistentStreamSafeTime() != 0 ? log_->LoadConsistentStreamSafeTime() : 0;
+  }
+  // consistent_stream_safe_time might not be available if the segment is not finalized yet, or not
+  // running transactions. In that case, return a marker value HybridTime::kInvalid.
+  return consistent_stream_safe_time != 0 ? consistent_stream_safe_time
+                                          : HybridTime::kInvalid.ToUint64();
+}
+
+Result<int64_t> LogCache::GetMaxReplicateIndexFromSegmentFooter(
+    const int64_t segment_number) const {
+  int64_t segment_max_replicate_index = -1;
+  const auto segment =
+      VERIFY_RESULT(log_->GetLogReader()->GetSegmentBySequenceNumber(segment_number));
+  if (!segment) {
+    LOG_WITH_PREFIX(WARNING) << "Segment " << segment_number << " not found";
+    return segment_max_replicate_index;
+  }
+  if (segment->HasFooter()) {
+    segment_max_replicate_index =
+        segment->footer().has_max_replicate_index() ? segment->footer().max_replicate_index() : 0;
+  } else {
+    segment_max_replicate_index =
+        log_->GetMaxReplicateIndex() != -1 ? log_->GetMaxReplicateIndex() : 0;
+  }
+  return segment_max_replicate_index;
 }
 
 bool LogCache::HasOpBeenWritten(int64_t index) const {
