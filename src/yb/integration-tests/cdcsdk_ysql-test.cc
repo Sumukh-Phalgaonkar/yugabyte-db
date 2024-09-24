@@ -10746,5 +10746,121 @@ TEST_F(CDCSDKYsqlTest, TestCleanupOfEligibleAndNonEligibleTables) {
   LOG(INFO) << "Stream, after master restart, only contains the table_1.";
 }
 
+// This test verifies that we are able to consume all the ops from the wal, when we read the WAL
+// segment by segment. Inorder to increase the number of segments the size of segments has been
+// reduced.
+TEST_F(CDCSDKYsqlTest, TestReadingOfWALSegmentBySegment) {
+  ANNOTATE_UNPROTECTED_WRITE(FLAGS_yb_enable_cdc_consistent_snapshot_streams) = true;
+  ANNOTATE_UNPROTECTED_WRITE(FLAGS_log_segment_size_bytes) = 10 * 1024;
+
+  auto tablet = ASSERT_RESULT(SetUpWithOneTablet(3, 1, false));
+
+  auto stream_id = ASSERT_RESULT(CreateConsistentSnapshotStream());
+
+  int batch_size = 100;
+  int total_single_shard_txns = 5000;
+  int total_multi_shard_txns = 50;
+  std::thread t1([&]() { ASSERT_OK(WriteRows(0, total_single_shard_txns, &test_cluster_)); });
+  std::thread t2([&]() {
+    int start_key = total_single_shard_txns;
+    for (int i = 0; i < total_multi_shard_txns; i++) {
+      ASSERT_OK(WriteRowsHelper(
+          start_key + i * batch_size, start_key + (i + 1) * batch_size, &test_cluster_, true));
+    }
+  });
+  std::thread t3([&]() {
+    int start_key = 10000;
+    for (int i = 0; i < total_multi_shard_txns; i++) {
+      ASSERT_OK(WriteRowsHelper(
+          start_key + i * batch_size, start_key + (i + 1) * batch_size, &test_cluster_, true));
+    }
+  });
+
+  std::thread t4([&]() {
+    int start_key = 15000;
+    for (int i = 0; i < total_multi_shard_txns; i++) {
+      ASSERT_OK(WriteRowsHelper(
+          start_key + i * batch_size, start_key + (i + 1) * batch_size, &test_cluster_, true));
+    }
+  });
+
+  bool ingestion_complete = false;
+  t1.join();
+  t2.join();
+  t3.join();
+  t4.join();
+  GetAllPendingChangesResponse change_resp;
+  GetAllPendingChangesResponse change_resp_2;
+
+  std::thread t6([&]() {
+    ASSERT_OK(WaitFor(
+        [&]() -> Result<bool> {
+          change_resp = GetAllPendingChangesFromCdc(stream_id, tablet);
+          if (ingestion_complete) {
+            change_resp_2 = GetAllPendingChangesFromCdc(stream_id, tablet, &change_resp.checkpoint);
+          }
+          return change_resp.records.size() + change_resp_2.records.size() == 45301;
+        },
+        MonoDelta::FromSeconds(180), "Timed out waiting for records"));
+  });
+
+  std::thread t5([&]() { ASSERT_OK(WriteRows(20000, 25000, &test_cluster_)); });
+  t5.join();
+
+  ingestion_complete = true;
+  t6.join();
+
+  // 0=DDL, 1=INSERT, 2=UPDATE, 3=DELETE, 4=READ, 5=TRUNCATE, 6=BEGIN, 7=COMMIT
+  const int expected_count[] = {
+      1, 25000, 0, 0, 0, 0, 10000 + total_multi_shard_txns * 3, 10000 + total_multi_shard_txns * 3};
+
+  for (int i = 0; i < 8; i++) {
+    ASSERT_EQ(expected_count[i], change_resp.record_count[i]);
+  }
+}
+
+TEST_F(CDCSDKYsqlTest, TestReadingOfWALWithUncommittedTxn) {
+  ANNOTATE_UNPROTECTED_WRITE(FLAGS_yb_enable_cdc_consistent_snapshot_streams) = true;
+  ANNOTATE_UNPROTECTED_WRITE(FLAGS_log_segment_size_bytes) = 10;
+
+  auto tablet = ASSERT_RESULT(SetUpWithOneTablet(1, 1, false));
+  auto conn = ASSERT_RESULT(test_cluster_.ConnectToDB(kNamespaceName));
+
+  auto stream_id = ASSERT_RESULT(CreateConsistentSnapshotStream());
+
+  ASSERT_OK(conn.Execute("BEGIN"));
+  ASSERT_OK(conn.Execute("INSERT INTO test_table values (999999, 999999)"));
+
+  int batch_size = 100;
+  int total_single_shard_txns = 5000;
+  int total_multi_shard_txns = 50;
+  std::thread t1([&]() { ASSERT_OK(WriteRows(0, total_single_shard_txns, &test_cluster_)); });
+  std::thread t2([&]() {
+    int start_key = total_single_shard_txns;
+    for (int i = 0; i < total_multi_shard_txns; i++) {
+      ASSERT_OK(WriteRowsHelper(
+          start_key + i * batch_size, start_key + (i + 1) * batch_size, &test_cluster_, true));
+    }
+  });
+
+  t1.join();
+  t2.join();
+
+  auto get_change_resp = ASSERT_RESULT(GetChangesFromCDC(stream_id, tablet));
+  ASSERT_EQ(get_change_resp.cdc_sdk_proto_records_size(), 0);
+
+  ASSERT_OK(conn.Execute("COMMIT"));
+
+  auto change_resp = GetAllPendingChangesFromCdc(stream_id, tablet);
+
+  // 0=DDL, 1=INSERT, 2=UPDATE, 3=DELETE, 4=READ, 5=TRUNCATE, 6=BEGIN, 7=COMMIT
+  const int expected_count[] = {
+      1, 10001, 0, 0, 0, 0, 5000 + total_multi_shard_txns + 1, 5000 + total_multi_shard_txns + 1};
+
+  for (int i = 1; i < 8; i++) {
+    ASSERT_EQ(expected_count[i], change_resp.record_count[i]);
+  }
+}
+
 }  // namespace cdc
 }  // namespace yb

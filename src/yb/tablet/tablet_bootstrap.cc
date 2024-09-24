@@ -850,12 +850,7 @@ class TabletBootstrap {
             : noop;
 
     log::ConsistentTimeCallback consistent_time_callback = {};
-    if (tablet_->transaction_participant()) {
-      LOG(INFO) << "Setting consistent time callback for transaction status tablet";
-      consistent_time_callback = std::bind(
-          &TransactionParticipant::GetMinStartTimeAmongAllRunningTransactions,
-          tablet_->transaction_participant());
-    }
+    consistent_time_callback = std::bind(&Tablet::GetConsistentStreamSafeTime, tablet_);
 
     RETURN_NOT_OK(Log::Open(
         log_options,

@@ -346,6 +346,12 @@ class Consensus {
       OpId from, uint64_t stream_safe_time, CoarseTimePoint deadline,
       bool fetch_single_entry = false, int64_t* repl_index = nullptr) = 0;
 
+  // Read all the messages in a segment for CDC producer.
+  virtual Result<ReadOpsResult> ReadReplicatedMessagesInSegmentForCDC(
+      OpId from_op_id, CoarseTimePoint deadline, bool fetch_single_entry = false,
+      int64_t* last_commited_index = nullptr,
+      uint64_t* consistent_stream_safe_time_footer = nullptr) = 0;
+
   virtual void UpdateCDCConsumerOpId(const yb::OpId& op_id) = 0;
 
  protected:

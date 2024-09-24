@@ -2082,6 +2082,7 @@ Result<string> CDCSDKYsqlTest::GetUniverseId(PostgresMiniCluster* cluster) {
     int64 prev_safetime = safe_hybrid_time;
     int prev_index = wal_segment_index;
     const CDCSDKCheckpointPB* prev_checkpoint_ptr = cp;
+    int count[] = {0, 0, 0, 0, 0, 0, 0, 0};
 
     do {
       GetChangesResponsePB change_resp;
@@ -2099,6 +2100,7 @@ Result<string> CDCSDKYsqlTest::GetUniverseId(PostgresMiniCluster* cluster) {
 
       for (int i = 0; i < change_resp.cdc_sdk_proto_records_size(); i++) {
         resp.records.push_back(change_resp.cdc_sdk_proto_records(i));
+        UpdateRecordCount(change_resp.cdc_sdk_proto_records(i), count);
       }
 
       prev_checkpoint = change_resp.cdc_sdk_checkpoint();
@@ -2108,8 +2110,13 @@ Result<string> CDCSDKYsqlTest::GetUniverseId(PostgresMiniCluster* cluster) {
       prev_records = change_resp.cdc_sdk_proto_records_size();
     } while (prev_records != 0);
 
+
     resp.checkpoint = prev_checkpoint;
     resp.safe_hybrid_time = prev_safetime;
+
+    for (int i = 0; i < 8; i++) {
+      resp.record_count[i] = count[i];
+    }
     return resp;
   }
 

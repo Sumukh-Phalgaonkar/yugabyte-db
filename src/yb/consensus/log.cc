@@ -777,7 +777,7 @@ Status Log::CloseCurrentSegment() {
                         << active_segment_->path();
   }
 
-  HybridTime consistent_stream_safe_time = HybridTime::kInvalid;
+  HybridTime consistent_stream_safe_time = HybridTime::kInitial;
   if (consistent_time_callback_) {
     consistent_stream_safe_time = consistent_time_callback_();
   }
@@ -1054,6 +1054,7 @@ void Log::UpdateFooterForBatch(LogEntryBatch* batch) {
   if (footer_builder_.has_max_replicate_index()) {
     max_replicate_index_.store(footer_builder_.max_replicate_index(), std::memory_order_release);
   }
+
   if (footer_builder_.has_consistent_stream_safe_time()) {
     consistent_stream_safe_time_.store(
         footer_builder_.consistent_stream_safe_time(), std::memory_order_release);
@@ -1130,6 +1131,7 @@ Result<bool> Log::ReuseAsActiveSegment(const scoped_refptr<ReadableLogSegment>& 
   if (footer_builder_.has_max_replicate_index()) {
     max_replicate_index_.store(footer_builder_.max_replicate_index(), std::memory_order_release);
   }
+
   if (footer_builder_.has_consistent_stream_safe_time()) {
     consistent_stream_safe_time_.store(
         footer_builder_.consistent_stream_safe_time(), std::memory_order_release);
@@ -1722,6 +1724,9 @@ Status Log::Close() {
       RETURN_NOT_OK(DoSync());
       RETURN_NOT_OK(CloseCurrentSegment());
       RETURN_NOT_OK(ReplaceSegmentInReaderUnlocked());
+      // Re-assign the consistent_time_callback_ with an empty function so that the resources
+      // (txn-participant) associated with the original callback can be released.
+      consistent_time_callback_ = {};
       log_state_ = kLogClosed;
       if (background_synchronizer_wait_state_) {
         yb::ash::RaftLogWaitStatesTracker().Untrack(background_synchronizer_wait_state_);
@@ -2007,12 +2012,7 @@ Status Log::SwitchToAllocatedSegment() {
   footer_builder_.Clear();
   footer_builder_.set_num_entries(0);
 
-  HybridTime consistent_stream_safe_time = HybridTime::kInvalid;
-  if (consistent_time_callback_) {
-    consistent_stream_safe_time = consistent_time_callback_();
-  }
-
-  uint64_t consistent_stream_safe_time_uint64 = consistent_stream_safe_time.ToUint64();
+  uint64_t consistent_stream_safe_time_uint64 = HybridTime::kInvalid.ToUint64();
   consistent_stream_safe_time_.store(consistent_stream_safe_time_uint64, std::memory_order_release);
   footer_builder_.set_consistent_stream_safe_time(consistent_stream_safe_time_uint64);
 
