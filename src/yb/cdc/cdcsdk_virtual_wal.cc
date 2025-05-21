@@ -635,6 +635,7 @@ Status CDCSDKVirtualWAL::GetConsistentChangesInternal(
 
     if (lsn_result.ok() && txn_id_result.ok()) {
       row_message->set_pg_lsn(*lsn_result);
+      LOG(INFO) << "Sumukh: new lsn = " << *lsn_result;
       row_message->set_pg_transaction_id(*txn_id_result);
       last_seen_unique_record_id_ = unique_id;
       last_shipped_record_tablet_id = tablet_id;
@@ -674,6 +675,8 @@ Status CDCSDKVirtualWAL::GetConsistentChangesInternal(
         }
         case RowMessage_Op_COMMIT: {
           last_shipped_commit.commit_lsn = *lsn_result;
+          LOG_WITH_PREFIX(INFO) << "Sumukh: setting last_shipped_commit.commit_lsn =  "
+                                << last_shipped_commit.commit_lsn;
           last_shipped_commit.commit_txn_id = *txn_id_result;
           last_shipped_commit.commit_record_unique_id = unique_id;
           last_shipped_commit.last_pub_refresh_time = last_pub_refresh_time;
@@ -728,7 +731,7 @@ Status CDCSDKVirtualWAL::GetConsistentChangesInternal(
     }
 
     int64_t unacked_txn = 0;
-    if(!commit_meta_and_last_req_map_.empty()) {
+    if (!commit_meta_and_last_req_map_.empty()) {
       unacked_txn = (metadata.max_txn_id -
             commit_meta_and_last_req_map_.begin()->second.record_metadata.commit_txn_id);
     }
@@ -828,6 +831,10 @@ Status CDCSDKVirtualWAL::GetChangesInternal(
           RETURN_NOT_OK(s);
         }
       }
+    }
+
+    for (auto record: resp.cdc_sdk_proto_records()) {
+      LOG(INFO) << "Sumukh: received a record from GetChanges: " << record.ShortDebugString();
     }
 
     RETURN_NOT_OK(AddRecordsToTabletQueue(tablet_id, &resp));
@@ -974,6 +981,8 @@ Status CDCSDKVirtualWAL::AddRecordToVirtualWalPriorityQueue(
         continue;
       }
 
+      LOG(INFO) << "Sumukh: added record to pq, unique_id = " << unique_id->ToString() << std::endl
+                << "record = " << record->DebugString();
       sorted_records->push({tablet_id, {unique_id, record}});
       break;
     } else {
@@ -1128,12 +1137,22 @@ Result<uint32_t> CDCSDKVirtualWAL::GetRecordTxnID(
 }
 
 Status CDCSDKVirtualWAL::AddEntryForBeginRecord(const RecordInfo& record_info) {
+  // 1, 4
   auto commit_lsn = last_shipped_commit.commit_lsn;
   CommitMetadataAndLastSentRequest obj;
   obj.record_metadata = last_shipped_commit;
   obj.last_sent_req_for_begin_map =
       std::unordered_map<TabletId, LastSentGetChangesRequestInfo>(tablet_last_sent_req_map_);
+
+  LOG(INFO) << "Sumukh: searching for commit_lsn = " << commit_lsn
+            << " in commit_meta_and_last_req_map_";
+  for (auto r : commit_meta_and_last_req_map_) {
+    LOG(INFO) << "Sumukh: entry in commit_meta_and_last_req_map_ with lsn = " << r.first;
+  }
+
   DCHECK(commit_meta_and_last_req_map_.find(commit_lsn) == commit_meta_and_last_req_map_.end());
+  // [1, {}], [4, {}]
+  // We insert to commit_meta_and_last_req_map_ here.
   commit_meta_and_last_req_map_[commit_lsn] = obj;
   VLOG_WITH_PREFIX(2) << "Popped BEGIN record, adding an entry in commit_meta_map with commit_lsn: "
                       << commit_lsn << ", txn_id: " << last_shipped_commit.commit_txn_id

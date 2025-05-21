@@ -4431,5 +4431,17 @@ TEST_F(CDCSDKConsumptionConsistentChangesTest, TestColocatedUpdateWithIndexMulti
   ASSERT_EQ(update_record_2.row_message().new_tuple()[2].pg_ql_value().int32_value(), 100);
 }
 
+TEST_F(CDCSDKConsumptionConsistentChangesTest, TestColocatedUpdate) {
+    ASSERT_OK(SetUpWithParams(
+      1, 1, true /* colocated */, true /* cdc_populate_safepoint_record */,
+      true /* set_pgsql_proxy_bind_address */));
+
+  auto table = ASSERT_RESULT(CreateTable(
+      &test_cluster_, kNamespaceName, kTableName, 1 /* num_tablets */, true /* add_pk */,
+      true /* colocated */));
+
+
+}
+
 }  // namespace cdc
 }  // namespace yb
